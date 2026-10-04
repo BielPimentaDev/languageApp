@@ -4,6 +4,11 @@ import type { ScenarioRepository } from '../../application/scenarios/scenario-re
 import type { Scenario } from '../../domain/scenarios/scenario';
 import { parseScenarioFile } from './parse-scenario-file';
 
+interface LoadedScenario {
+  readonly fileName: string;
+  readonly scenario: Scenario;
+}
+
 /**
  * Lê os arquivos de cenário (`*.json`) uma vez, na inicialização, e os mantém em memória.
  * Um arquivo inválido ou um id repetido faz o carregamento falhar.
@@ -13,13 +18,16 @@ export class FileScenarioRepository implements ScenarioRepository {
 
   static async load(directory: string): Promise<FileScenarioRepository> {
     const fileNames = (await readdir(directory)).filter((name) => name.endsWith('.json')).sort();
-    const scenarios = await Promise.all(
-      fileNames.map(async (fileName) =>
-        parseScenarioFile(fileName, await readFile(join(directory, fileName), 'utf8')),
+    const loaded = await Promise.all(
+      fileNames.map(
+        async (fileName): Promise<LoadedScenario> => ({
+          fileName,
+          scenario: parseScenarioFile(fileName, await readFile(join(directory, fileName), 'utf8')),
+        }),
       ),
     );
-    assertUniqueIds(scenarios, fileNames);
-    return new FileScenarioRepository(scenarios);
+    assertUniqueIds(loaded);
+    return new FileScenarioRepository(loaded.map(({ scenario }) => scenario));
   }
 
   async list(): Promise<readonly Scenario[]> {
@@ -27,16 +35,15 @@ export class FileScenarioRepository implements ScenarioRepository {
   }
 }
 
-function assertUniqueIds(scenarios: readonly Scenario[], fileNames: readonly string[]): void {
+function assertUniqueIds(loaded: readonly LoadedScenario[]): void {
   const fileNameById = new Map<string, string>();
-  scenarios.forEach((scenario, index) => {
-    const fileName = fileNames[index];
+  for (const { fileName, scenario } of loaded) {
     const previous = fileNameById.get(scenario.id);
     if (previous !== undefined) {
       throw new Error(
         `Scenario id "${scenario.id}" is used by both "${previous}" and "${fileName}"`,
       );
     }
-    fileNameById.set(scenario.id, fileName ?? '');
-  });
+    fileNameById.set(scenario.id, fileName);
+  }
 }

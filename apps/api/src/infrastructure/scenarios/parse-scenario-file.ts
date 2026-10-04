@@ -1,4 +1,4 @@
-import { scenarioFileSchema } from '@language-app/shared';
+import { type ScenarioFile, scenarioFileSchema } from '@language-app/shared';
 import type { z } from 'zod';
 import type { Scenario } from '../../domain/scenarios/scenario';
 
@@ -26,7 +26,23 @@ export function parseScenarioFile(fileName: string, raw: string): Scenario {
   if (!result.success) {
     throw new InvalidScenarioFileError(fileName, result.error.issues.map(describeIssue));
   }
-  return result.data;
+  return toScenario(result.data);
+}
+
+/** Converte o contrato do arquivo no objeto de domínio: o domínio nunca recebe o dado cru. */
+function toScenario(file: ScenarioFile): Scenario {
+  return {
+    id: file.id,
+    title: file.title,
+    description: file.description,
+    persona: {
+      name: file.persona.name,
+      role: file.persona.role,
+      speakingStyle: file.persona.speakingStyle,
+    },
+    situation: file.situation,
+    objectives: file.objectives.map(({ id, description }) => ({ id, description })),
+  };
 }
 
 function describeIssue(issue: z.core.$ZodIssue): string {

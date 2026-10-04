@@ -1,7 +1,6 @@
-import type { FastifyInstance } from 'fastify';
 import { ListScenarios } from '../application/scenarios/list-scenarios';
 import type { ApiConfig } from './config/api-config';
-import { createHttpServer } from './http/server';
+import { createHttpServer, type HttpServer } from './http/server';
 import { FileScenarioRepository } from './scenarios/file-scenario-repository';
 
 export interface BuildAppOptions {
@@ -11,7 +10,7 @@ export interface BuildAppOptions {
 }
 
 /** Composition root: instancia os adaptadores e os injeta nos casos de uso (ADR 003, ADR 011). */
-export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
+export async function buildApp(options: BuildAppOptions): Promise<HttpServer> {
   const scenarioRepository = await FileScenarioRepository.load(options.scenariosDirectory);
 
   return createHttpServer({

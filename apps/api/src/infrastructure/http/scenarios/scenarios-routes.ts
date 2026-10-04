@@ -1,10 +1,10 @@
 import type { ListScenariosResponse } from '@language-app/shared';
 import type { FastifyInstance } from 'fastify';
-import type { ListScenarios } from '../../../application/scenarios/list-scenarios';
+import type { UseCases } from '../server';
 
 export function registerScenariosRoutes(
   app: FastifyInstance,
-  useCases: { listScenarios: ListScenarios },
+  useCases: Pick<UseCases, 'listScenarios'>,
 ): void {
   app.get('/scenarios', async (): Promise<ListScenariosResponse> => {
     const scenarios = await useCases.listScenarios.execute();
