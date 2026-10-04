@@ -1,8 +1,8 @@
 # ADR 007 — Usuário fixo até a semana 4, depois login Google
 
-- Status: Aceito
+- Status: Substituído por [010](./010-sem-identidade-no-mvp.md)
 - Data: 2026-10-04
-- Referências: [architecture.md §2, §5, §12](../architecture.md) · PRD RF01
+- Referências: [architecture-v1.md §2, §5, §12](../archive/architecture-v1.md) · [PRD v1](../archive/prd-v1.md) RF01
 
 ## Contexto
 

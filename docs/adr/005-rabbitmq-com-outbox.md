@@ -1,8 +1,8 @@
 # ADR 005 — RabbitMQ (`amqplib`) com outbox
 
-- Status: Aceito
+- Status: Substituído por [009](./009-processo-unico-e-relatorio-sob-demanda.md)
 - Data: 2026-10-04
-- Referências: [architecture.md §2, §10](../architecture.md) · Constitution, princípios V e VI
+- Referências: [architecture-v1.md §2, §10](../archive/architecture-v1.md) · Constitution v1, princípios V e VI
 
 ## Contexto
 

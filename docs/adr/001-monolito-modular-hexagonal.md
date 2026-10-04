@@ -1,8 +1,8 @@
 # ADR 001 — Monolito modular com arquitetura hexagonal por módulo
 
-- Status: Aceito
+- Status: Substituído por [011](./011-api-em-tres-camadas-por-contexto.md)
 - Data: 2026-10-04
-- Referências: [architecture.md §1, §2, §4, §5](../architecture.md) · Constitution, princípios I e II
+- Referências: [architecture-v1.md §1, §2, §4, §5](../archive/architecture-v1.md) · Constitution v1, princípios I e II
 
 ## Contexto
 

@@ -1,8 +1,8 @@
 # ADR 004 — PostgreSQL + Drizzle com um `pgSchema` por módulo
 
-- Status: Aceito
+- Status: Substituído por [008](./008-estado-em-memoria-atras-de-repositorios.md)
 - Data: 2026-10-04
-- Referências: [architecture.md §2, §11](../architecture.md) · Constitution, princípio IV
+- Referências: [architecture-v1.md §2, §11](../archive/architecture-v1.md) · Constitution v1, princípio IV
 
 ## Contexto
 

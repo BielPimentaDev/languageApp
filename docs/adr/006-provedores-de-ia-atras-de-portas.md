@@ -1,8 +1,8 @@
 # ADR 006 — Provedores de LLM, STT e TTS atrás de portas
 
-- Status: Aceito
+- Status: Substituído por [016](./016-llm-atras-de-porta-pronta-para-streaming.md)
 - Data: 2026-10-04
-- Referências: [architecture.md §2, §13, §15, §16](../architecture.md) · Constitution, princípios II e VII
+- Referências: [architecture-v1.md §2, §13, §15, §16](../archive/architecture-v1.md) · Constitution v1, princípios II e VII
 
 ## Contexto
 

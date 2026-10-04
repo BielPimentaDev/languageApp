@@ -1,536 +1,335 @@
 # Documento de Arquitetura — app de idiomas (MVP)
 
-Oct 4, 2026 · @Gabriel · Status: **vigente** · Implementa: [`docs/prd.md`](./prd.md)
+Oct 4, 2026 · @Gabriel · Status: **vigente**
 
-> **Papel deste documento.** É a referência técnica do projeto: define *como* o sistema é construído (arquitetura, fronteiras, padrões, testes e infraestrutura). O *quê* e o *porquê* ficam no PRD e nas specs de cada feature (`specs/###-*/spec.md`). No fluxo do spec-kit, os princípios inegociáveis daqui viram a **constitution** (`.specify/memory/constitution.md`) e o restante é insumo do `/speckit-plan`.
+> **Papel deste documento.** É a referência técnica do projeto: define *como* o sistema é construído. O vocabulário do domínio está em [`CONTEXT.md`](../CONTEXT.md), e as decisões difíceis de reverter, com o porquê de cada uma, estão em [`docs/adr/`](./adr/). O *quê* (user stories e critérios de aceite) fica na spec gerada pelo `/to-spec`.
 >
-> Mudanças em decisões marcadas como **ADR** exigem um registro novo em `docs/adr/` (ver [Governança](#governança-e-adrs)).
+> A versão anterior deste documento, junto com o PRD e o roadmap originais, está em [`docs/archive/`](./archive/).
 
 ---
 
-## 1. Princípios
+## 1. Objetivo do MVP
 
-Estes princípios são inegociáveis e são verificados na CI sempre que possível.
+Validar o ciclo central do produto com um único aluno (o autor), rodando localmente:
 
-| # | Princípio | Como é garantido |
+**Missão** (conversa com o personagem até cumprir os objetivos) → **relatório** (correções) → **"Quero treinar"** (a palavra é guardada para o treino futuro).
+
+- Um cenário: a cafeteria (pedir a bebida, o tamanho, para viagem ou não, e a forma de pagamento).
+- Idioma-alvo inglês e nível C1, fixos no MVP, mas tratados como parâmetros.
+- Sem login, sem persistência externa, só texto (sem áudio).
+
+O projeto também é um campo de estudo de arquitetura: cada fronteira existe para permitir novos cenários, modos, idiomas, níveis, áudio e persistência sem reescrever o núcleo.
+
+---
+
+## 2. Decisões
+
+| Tema | Escolha | ADR |
 | --- | --- | --- |
-| P1 | **Monolito modular**: módulos com fronteira de serviço, um único deploy | `dependency-cruiser` quebra o build se um módulo importar arquivo interno de outro |
-| P2 | **Arquitetura hexagonal dentro de cada módulo**: domínio no centro, sem dependência de framework, banco ou provedor | Regras de camada no `dependency-cruiser` |
-| P3 | **Testes primeiro no domínio e na aplicação** (TDD): o teste falha antes do código existir | Revisão de PR + cobertura mínima nas camadas internas |
-| P4 | **Dados por módulo**: cada módulo é dono do seu schema no Postgres; sem joins entre schemas | Repositórios só conhecem o próprio schema; revisão de migrations |
-| P5 | **Comunicação explícita**: chamada síncrona pela API pública do módulo ou evento versionado | Contratos em `packages/contracts` com zod |
-| P6 | **Confiabilidade de eventos**: outbox, entrega pelo menos uma vez, consumidores idempotentes | Teste de integração que entrega o mesmo evento duas vezes |
-| P7 | **Custo de IA sob controle desde o dia 1**: limite diário, teto mensal e custo por sessão medido | Testes do limitador + métrica de custo |
-| P8 | **Observável por padrão**: logs estruturados, trace ponta a ponta (HTTP → evento → worker), latência por etapa | Instrumentação nos adapters compartilhados |
-| P9 | **Simplicidade (YAGNI)**: nada de serviço novo, abstração ou dependência sem motivo medido | Toda complexidade extra é justificada no plano da feature |
+| Correções | Só no relatório; o personagem fica sempre em personagem | [013](./adr/013-correcoes-so-no-relatorio.md) |
+| Fim da missão | Por objetivos, com verificador separado; botão "Encerrar" como saída | [014](./adr/014-tres-papeis-de-ia-e-fim-por-objetivos.md) |
+| Estado | Em memória, atrás de repositórios | [008](./adr/008-estado-em-memoria-atras-de-repositorios.md) |
+| IA | Porta `LLMClient` pronta para streaming, com a Claude API como primeiro adaptador | [016](./adr/016-llm-atras-de-porta-pronta-para-streaming.md) |
+| Resposta HTTP | Completa no MVP; streaming (SSE) depois, só na camada HTTP | [016](./adr/016-llm-atras-de-porta-pronta-para-streaming.md) |
+| Cenários e prompts | Arquivos validados com Zod; `PromptBuilder` por composição | [015](./adr/015-cenarios-como-dados-e-prompts-compostos.md) |
+| Repositório | Monorepo pnpm com `apps/web`, `apps/api` e `packages/shared` | [012](./adr/012-monorepo-com-pacote-shared.md) |
+| Camadas da API | `domain`, `application` e `infrastructure` (com `http` dentro), por contexto | [011](./adr/011-api-em-tres-camadas-por-contexto.md) |
+| Servidor | Fastify, composition root manual, sem container de DI | [003](./adr/003-fastify-composition-root-manual.md) |
+| Front → API | O navegador chama o Fastify direto, com CORS | [017](./adr/017-navegador-chama-a-api-direto.md) |
+| Processos | Só a API; relatório sob demanda, separado do encerramento | [009](./adr/009-processo-unico-e-relatorio-sob-demanda.md) |
+| Identidade | Nenhuma no MVP; a API escuta só em `localhost` | [010](./adr/010-sem-identidade-no-mvp.md) |
+| Falhas do LLM | Retry e validação no adaptador; o verificador não derruba o turno | [016](./adr/016-llm-atras-de-porta-pronta-para-streaming.md), [014](./adr/014-tres-papeis-de-ia-e-fim-por-objetivos.md) |
+| Testes | Determinísticos com fakes, mais evals sob demanda | §9 |
+| Tooling | TypeScript strict, Vitest, Biome, Zod, `tsx` | §11 |
+| Processo | Fatias verticais, um ADR por decisão difícil de reverter | §14 |
 
 ---
 
-## 2. Visão geral e decisões
-
-O MVP roda como um monolito modular em TypeScript: um código, dois processos (`api` e `worker`) e comunicação assíncrona por RabbitMQ. Cada módulo é um hexágono: o domínio não sabe que existe HTTP, Postgres, RabbitMQ ou LLM.
-
-| Decisão | Escolha | Motivo | ADR |
-| --- | --- | --- | --- |
-| Arquitetura | Monolito modular + hexagonal por módulo | Itera rápido, treina fronteiras e permite extrair um módulo sem reescrever o domínio | 001 |
-| Processos | `api` e `worker`, mesma base de código | Pratica trabalho assíncrono sem multiplicar repositórios | 002 |
-| Servidor HTTP | **Fastify** com composition root manual (sem container de DI) | Mantém o domínio livre de decorators e deixa a ligação porta → adapter explícita, que é o ponto do exercício | 003 |
-| Persistência | PostgreSQL + **Drizzle** (`pgSchema` por módulo) | SQL próximo do real, suporte direto a schemas e migrations por módulo | 004 |
-| Mensageria | RabbitMQ (`amqplib`) com outbox | Exercita exchanges, ack manual, retries e DLQ | 005 |
-| Fronteiras | **dependency-cruiser** | Expressa regras entre módulos *e* entre camadas num só lugar | 001 |
-| Cliente | Next.js como PWA | Valida o ciclo em dias; Expo vem depois reaproveitando `contracts` | — |
-| IA | APIs de LLM, STT e TTS atrás de portas | Provedor é detalhe de adapter; trocar não toca o domínio | 006 |
-| Identidade | Usuário fixo até a semana 4, depois Google | Trocar o adapter de autenticação não toca os módulos | 007 |
-| Primeira extração | `speech` ou `conversation` | Só com métrica que justifique (latência, custo ou escala) | — |
-
-### Mudanças em relação à versão anterior (Tech Spec)
-
-- **Módulo `core` dividido** em `identity` (usuário, perfil, autenticação) e `learning` (vocabulário, revisão, dias seguidos). `core` virava gaveta de tudo.
-- **`audio` renomeado para `speech`**, que descreve o que o módulo faz (fala ↔ texto), não o formato.
-- **Análise da sessão passa para `conversation`**, dono das mensagens, do cenário e dos objetivos. Antes, `core` precisaria ler as mensagens de outro módulo para analisar.
-- **Estrutura hexagonal explícita** (portas de entrada/saída, adapters, composition root) no lugar de `domain/application/infra/http/events`.
-- **Estratégia de testes por camada**, com testes de contrato de porta e fakes oficiais.
-- **Envelope de evento padronizado**, DLQ por fila, evento de exclusão de conta (LGPD) e teto mensal de custo.
-- Escolhas que estavam em aberto ("NestJS ou Fastify", "Drizzle ou Prisma", "dependency-cruiser ou eslint-plugin-boundaries") foram decididas.
-
----
-
-## 3. Arquitetura de sistema
+## 3. Visão geral
 
 ```mermaid
 flowchart LR
-  subgraph Cliente
-    WEB[Next.js PWA]
+  WEB["apps/web<br/>Next.js"] -- "HTTP + CORS<br/>(NEXT_PUBLIC_API_URL)" --> API
+  subgraph API["apps/api — Fastify (localhost)"]
+    HTTP["infrastructure/http"] --> APP["application<br/>casos de uso + PromptBuilder"]
+    APP --> DOM["domain"]
+    APP -. porta .-> LLM["infrastructure/llm<br/>adaptador Claude"]
+    APP -. porta .-> MEM["infrastructure/persistence<br/>repositórios em memória"]
+    APP -. porta .-> SCN["infrastructure/scenarios<br/>leitura dos arquivos"]
   end
-  subgraph "apps/server (mesma imagem)"
-    API[processo api<br/>main.api.ts]
-    WRK[processo worker<br/>main.worker.ts<br/>consumers + relay + agendador]
-  end
-  PG[(PostgreSQL<br/>schema por módulo<br/>+ outbox)]
-  MQ[[RabbitMQ<br/>domain.events]]
-  RD[(Redis<br/>limites e cache)]
-  AI[Provedores IA<br/>LLM · STT · TTS]
-  MAIL[Provedor de e-mail]
-
-  WEB -- HTTPS /api/v1 --> API
-  API --> PG
-  API --> RD
-  API --> AI
-  WRK -- relay lê outbox --> PG
-  WRK -- publica --> MQ
-  MQ -- consome --> WRK
-  WRK --> AI
-  WRK --> MAIL
+  LLM --> CLAUDE[(Claude API)]
+  SCN --> FILES[("scenarios/*<br/>arquivos de cenário")]
+  SHARED["packages/shared<br/>schemas Zod"] -. tipos .-> WEB
+  SHARED -. tipos .-> API
 ```
-
-- A API grava dados de negócio e eventos (outbox) **na mesma transação**.
-- O relay, dentro do worker, publica os eventos pendentes no RabbitMQ.
-- Os consumers do worker processam as filas; API e worker só conversam via banco (outbox) e broker.
-- O que a pessoa espera na hora (resposta do personagem, transcrição) é síncrono dentro da requisição. Fila só para o que pode acontecer depois.
 
 ---
 
-## 4. Módulos
-
-| Módulo | Responsabilidade | Schema | Expõe (porta de entrada pública) | Depende de |
-| --- | --- | --- | --- | --- |
-| `identity` | Usuário, perfil (idioma-alvo, nível, fuso, autoplay), autenticação, exclusão de conta | `identity` | `IdentityApi` (`getProfile`, `resolveUser`) | — |
-| `conversation` | Cenários, missões, sessões, mensagens, chamada ao LLM, análise pós-sessão, relatório, modo "usar a palavra" | `conversation` | `ConversationApi` (`sendMessage`, `getSuggestion`) | `identity`, `learning` (para buscar a palavra no modo prática) |
-| `speech` | Transcrição (STT), síntese (TTS) e cache de áudio | `speech` | `SpeechApi` (`transcribe`, `synthesize`) | `conversation` (entrega o texto transcrito) |
-| `learning` | Vocabulário pessoal, agenda de revisão (1/3/7/14), fila do dia, dias seguidos | `learning` | `LearningApi` (`getVocabularyItem`) | `conversation` (busca a sugestão ao salvar) |
-| `notifications` | Lembrete diário por e-mail | `notifications` | — (só consome eventos) | `identity` |
-
-Regras de dependência entre módulos:
-
-- Não pode haver ciclo de imports entre módulos (verificado pelo `dependency-cruiser`). Quando dois módulos precisam um do outro, um deles usa **evento** em vez de chamada.
-- A "API pública" é um conjunto de portas de entrada exportadas pelo `index.ts`. Quando o módulo for extraído, ela vira um cliente HTTP com o mesmo contrato.
-
-### Shared
+## 4. Estrutura do repositório
 
 ```
-apps/server/src/shared/
-├── kernel/          # tipos sem dependência: UserId, Clock, DomainError, Result, ids
-└── infra/           # implementações técnicas reutilizadas por adapters
-    ├── db/          # conexão Drizzle, UnitOfWork, migrations runner
-    ├── messaging/   # conexão RabbitMQ, outbox writer, relay, consumer base (retry, DLQ, idempotência)
-    ├── cache/       # cliente Redis
-    ├── ai/          # clientes HTTP dos provedores (sem regra de negócio)
-    ├── http/        # bootstrap Fastify, tratamento de erro, plugins de auth e cota
-    ├── observability/ # pino, OpenTelemetry, métricas
-    └── config/      # leitura e validação de env (zod)
+languageApp/
+├── apps/
+│   ├── web/                    # Next.js: telas, cliente tipado da API
+│   └── api/
+│       ├── src/
+│       │   ├── domain/
+│       │   ├── application/
+│       │   ├── infrastructure/
+│       │   └── main.ts         # sobe o Fastify a partir do composition root
+│       ├── scenarios/          # um arquivo por cenário (dados, não código)
+│       └── evals/              # casos dourados dos prompts (pnpm eval)
+├── packages/
+│   └── shared/                 # schemas Zod: DTOs HTTP e schema do cenário
+├── docs/
+│   ├── architecture.md         # este documento
+│   ├── adr/
+│   └── archive/                # plano original (v1), substituído
+├── CONTEXT.md                  # glossário do domínio
+└── CLAUDE.md                   # regras para as sessões do Claude Code
 ```
 
-`shared/kernel` pode ser importado por qualquer camada. `shared/infra` **só** por adapters e composition roots, nunca por `domain` ou `application`.
+Os testes ficam ao lado do código (`*.test.ts`).
 
 ---
 
-## 5. Arquitetura hexagonal dentro do módulo
-
-```mermaid
-flowchart LR
-  subgraph "Adapters de entrada (driving)"
-    HTTP[http/ rotas Fastify]
-    MSG[messaging/ consumers]
-    JOB[jobs/ agendador]
-  end
-  subgraph Aplicação
-    IN([ports/in<br/>casos de uso])
-    UC[use-cases/]
-    OUT([ports/out<br/>repositórios, LLM, publisher, clock])
-  end
-  subgraph Domínio
-    D[entidades, value objects,<br/>regras, eventos de domínio]
-  end
-  subgraph "Adapters de saída (driven)"
-    DB[persistence/ Drizzle]
-    AIA[ai/ LLM, STT, TTS]
-    PUB[messaging/ outbox]
-    MEM[in-memory/ fakes]
-  end
-  HTTP --> IN
-  MSG --> IN
-  JOB --> IN
-  IN --> UC --> D
-  UC --> OUT
-  DB -. implementa .-> OUT
-  AIA -. implementa .-> OUT
-  PUB -. implementa .-> OUT
-  MEM -. implementa .-> OUT
-```
-
-### Estrutura de pastas (igual em todos os módulos)
+## 5. Camadas da API
 
 ```
-modules/learning/
-├── domain/                     # TypeScript puro: sem I/O, sem framework, sem zod
-│   ├── vocabulary-item.ts      # entidade
-│   ├── review-schedule.ts      # regra 1/3/7/14, acerto avança, erro volta a 1
-│   ├── streak.ts
-│   ├── events.ts               # eventos de domínio (objetos simples)
-│   └── errors.ts               # erros de domínio tipados
+apps/api/src/
+├── domain/                     # TypeScript puro, sem bibliotecas
+│   ├── missions/               # Mission, MissionStatus, Message, Objective
+│   ├── evaluation/             # Report, Correction
+│   ├── scenarios/              # Scenario, Persona
+│   └── vocabulary/             # VocabularyItem
 ├── application/
-│   ├── ports/
-│   │   ├── in/                 # interfaces dos casos de uso (o que o módulo oferece)
-│   │   └── out/                # interfaces do que o módulo precisa (repo, clock, llm, publisher)
-│   └── use-cases/              # orquestram domínio + portas de saída; uma classe/função por caso de uso
-├── adapters/
-│   ├── in/
-│   │   ├── http/               # rotas: valida com zod (contracts), chama porta in, mapeia resposta
-│   │   ├── messaging/          # consumers: desserializa envelope, chama porta in
-│   │   └── jobs/               # tarefas agendadas
-│   └── out/
-│       ├── persistence/        # tabelas Drizzle do schema "learning" + repositórios
-│       ├── ai/                 # implementação das portas de IA usando shared/infra/ai
-│       └── in-memory/          # fakes oficiais das portas de saída (testes e dev offline)
-├── module.ts                   # composition root: instancia adapters e injeta nos casos de uso
-└── index.ts                    # API pública: portas in públicas, tipos e register(api|worker)
+│   ├── missions/               # StartMission, SendMessage, EndMission + MissionRepository
+│   ├── evaluation/             # EvaluateMission
+│   ├── vocabulary/             # SaveVocabularyItem + VocabularyRepository
+│   ├── scenarios/              # ListScenarios + ScenarioRepository
+│   ├── llm/                    # porta LLMClient e erros de LLM
+│   └── prompts/                # PromptBuilder e blocos (papéis, nível, idioma)
+└── infrastructure/
+    ├── http/                   # rotas Fastify, validação, CORS, mapeamento de erros
+    ├── llm/                    # ClaudeLLMClient (retry, timeout, validação Zod)
+    ├── persistence/            # InMemoryMissionRepository, InMemoryVocabularyRepository
+    ├── scenarios/              # FileScenarioRepository (lê e valida os arquivos)
+    ├── config/                 # leitura e validação das variáveis de ambiente
+    └── container.ts            # composition root único
 ```
 
-### Regras de camada
+Os nomes acima ilustram a organização. Os nomes finais saem da implementação, seguindo o [`CONTEXT.md`](../CONTEXT.md).
+
+### Regras de dependência
 
 | Camada | Pode importar | Não pode importar |
 | --- | --- | --- |
-| `domain` | `domain` do próprio módulo, `shared/kernel` | Qualquer outra coisa (inclusive `zod`, `drizzle`, `fastify`, `contracts`) |
-| `application` | `domain`, `application`, `shared/kernel` | `adapters`, `shared/infra`, outros módulos |
-| `adapters` | `application`, `domain`, `shared/*`, `packages/contracts`, `index.ts` de outro módulo | Arquivos internos de outro módulo |
-| `module.ts` | Tudo dentro do próprio módulo, `shared/*`, `index.ts` de outro módulo | Arquivos internos de outro módulo |
-| `index.ts` | `application/ports/in`, `module.ts`, tipos públicos | — |
+| `domain` | Só `domain` | Qualquer biblioteca (inclusive Zod), `application`, `infrastructure` |
+| `application` | `domain`, `application`, Zod (para os schemas da saída estruturada) | `infrastructure`, Fastify, SDK da Anthropic |
+| `infrastructure` | Tudo acima, `packages/shared` e bibliotecas | — |
 
-Convenções:
-
-- **Casos de uso recebem o ator explicitamente** (`{ userId, ... }`). Quem resolve o usuário é o adapter HTTP, via `IdentityApi.resolveUser`. Não existe "usuário ambiente" dentro da aplicação.
-- **Tempo e aleatoriedade são portas** (`Clock`, `IdGenerator`). Regras de revisão, dias seguidos e reset de cota dependem de data e fuso, então precisam ser testáveis com relógio falso.
-- **Erros**: o domínio lança subclasses de `DomainError` com `code` estável (`DAILY_LIMIT_REACHED`, `SESSION_ALREADY_ENDED`...). Um único handler em `shared/infra/http` converte para `application/problem+json` com o status correto. Erro técnico de provedor vira `ProviderUnavailableError` no adapter.
-- **Transação e outbox**: a aplicação usa a porta `UnitOfWork.run(fn)`. O adapter Drizzle abre a transação, entrega repositórios e o `EventPublisher` ligados a ela, e o publisher grava no outbox. Assim "dado + evento" é atômico sem a aplicação conhecer SQL.
-- **DTOs na borda**: `packages/contracts` (zod) define o formato de HTTP e eventos. O adapter converte DTO ↔ objeto de domínio; o domínio nunca recebe um DTO cru.
-- **Prompts são código de domínio/aplicação puro**: a montagem do prompt (cenário, idioma, nível, histórico) é uma função pura testável; o adapter de LLM só envia texto e devolve texto/JSON validado.
+- Os **DTOs** de `packages/shared` são convertidos em objetos de domínio na borda (`infrastructure/http`). O domínio nunca recebe um DTO cru.
+- As **portas** são interfaces declaradas em `application`, e os adaptadores as implementam em `infrastructure`.
+- **Erros de domínio** (missão inexistente, missão já encerrada...) são classes com um código estável. Um único handler em `infrastructure/http` as traduz em status HTTP.
 
 ---
 
-## 6. Estrutura do repositório
+## 6. Fluxo da missão
 
-```
-idiomas/
-├── apps/
-│   ├── web/                       # Next.js PWA
-│   └── server/
-│       ├── src/
-│       │   ├── main.api.ts        # sobe HTTP: registra rotas de cada módulo
-│       │   ├── main.worker.ts     # sobe consumers, relay do outbox e agendador
-│       │   ├── modules/
-│       │   │   ├── identity/
-│       │   │   ├── conversation/
-│       │   │   ├── speech/
-│       │   │   ├── learning/
-│       │   │   └── notifications/
-│       │   └── shared/
-│       │       ├── kernel/
-│       │       └── infra/
-│       ├── test/
-│       │   ├── e2e/               # API real + Testcontainers
-│       │   └── support/           # builders, fixtures, helpers de containers
-│       └── .dependency-cruiser.cjs
-├── packages/
-│   ├── contracts/                 # DTOs HTTP e eventos (zod), versionados
-│   └── config/                    # tsconfig, eslint, vitest base
-├── docs/
-│   ├── prd.md
-│   ├── architecture.md            # este documento
-│   └── adr/                       # decisões registradas
-├── specs/                         # gerado pelo spec-kit, uma pasta por feature
-└── docker-compose.yml             # postgres, redis, rabbitmq (+ mailpit em dev)
+### Estados
+
+```mermaid
+stateDiagram-v2
+  [*] --> em_andamento: POST /missions
+  em_andamento --> em_andamento: turno com objetivos pendentes
+  em_andamento --> concluída: turno que cumpre o último objetivo
+  em_andamento --> abandonada: POST /missions/:id/end
+  concluída --> [*]
+  abandonada --> [*]
 ```
 
-Testes unitários e de aplicação ficam ao lado do código (`*.test.ts`); integração e e2e ficam em `apps/server/test/`.
+Uma missão `concluída` ou `abandonada` não aceita novas mensagens e pode gerar o relatório.
 
----
-
-## 7. Stack
-
-| Camada | Escolha |
-| --- | --- |
-| Linguagem | TypeScript (strict), Node.js LTS |
-| Monorepo | pnpm workspaces |
-| Cliente | Next.js (PWA), TanStack Query |
-| Servidor | Fastify, composition root manual |
-| Banco | PostgreSQL + Drizzle, migrations por módulo |
-| Mensageria | RabbitMQ com `amqplib` |
-| Cache e limites | Redis |
-| Contratos | `packages/contracts` com zod |
-| Fronteiras | dependency-cruiser |
-| Observabilidade | OpenTelemetry, `pino` (JSON) |
-| Testes | Vitest, Testcontainers (Postgres, RabbitMQ, Redis), Playwright (smoke e2e no cliente), k6 (carga) |
-| Ambiente local | Docker Compose (+ Mailpit para e-mail) |
-| CI | GitHub Actions |
-
----
-
-## 8. Estratégia de testes
-
-O objetivo é que a maior parte dos testes rode em milissegundos sem Docker, graças às portas. Infraestrutura real só aparece nos testes que verificam os próprios adapters.
-
-| Nível | O que testa | Dependências | Onde | Quando roda |
-| --- | --- | --- | --- | --- |
-| **Domínio** (unitário) | Regras puras: intervalos de revisão, dias seguidos no fuso, avaliação de cota, montagem de prompt | Nenhuma (nem mocks) | `domain/*.test.ts` | Todo commit |
-| **Aplicação** | Casos de uso com fakes `in-memory` das portas de saída e `FakeClock` | Fakes oficiais | `use-cases/*.test.ts` | Todo commit |
-| **Contrato de porta** | Uma mesma suíte roda contra o fake e contra o adapter real, garantindo que o fake se comporta como o real | Testcontainers no adapter real | `adapters/out/**/*.contract.test.ts` | Todo PR |
-| **Adapter de entrada HTTP** | Validação, status, mapeamento de erros, auth e cota | `fastify.inject` + fakes | `adapters/in/http/*.test.ts` | Todo commit |
-| **Mensageria** | Outbox → relay → fila → consumer; idempotência (mesmo evento 2x); retry e DLQ; broker fora do ar não perde evento | Testcontainers (Postgres + RabbitMQ) | `test/integration/messaging` | Todo PR |
-| **Arquitetura** | Fronteiras entre módulos e regras de camada | dependency-cruiser | CI | Todo commit |
-| **E2E API** | Fluxos do PRD ponta a ponta com provedores de IA falsos (`ScriptedLlm`, `FakeStt`, `FakeTts`) | Testcontainers | `test/e2e` | Todo PR |
-| **Smoke do cliente** | Abrir app, escolher cenário, trocar mensagem, ver resumo | Playwright contra ambiente local | `apps/web/e2e` | Main e antes de release |
-| **Carga** | Latência p95 de texto/áudio e comportamento da cota | k6 | `perf/` | Manual, por semana |
-| **Qualidade da IA** | Correções e avaliação de objetivos fazem sentido | Amostra revisada à mão; conjunto "golden" pequeno depois | `evals/` | Manual, fora da CI |
-
-Regras:
-
-- **TDD obrigatório em `domain` e `application`**: escrever o teste, ver falhar, implementar, refatorar.
-- **Nada de mock de biblioteca** (Drizzle, amqplib, SDK de IA). Se algo precisa ser falso, é uma porta e tem um fake oficial em `adapters/out/in-memory`.
-- **Provedores de IA nunca são chamados na CI.** Os fakes devolvem respostas roteirizadas; o adapter real tem um teste de contrato opcional (`pnpm test:providers`) rodado à mão com chave de teste.
-- **Cobertura mínima**: 90% em `domain` + `application`; sem meta para adapters (são cobertos por contrato e e2e).
-- **Builders de teste** (`aVocabularyItem().dueIn(3).build()`) em `test/support` para manter os testes legíveis.
-- Critério de pronto de toda feature: testes da tabela acima aplicáveis existem e passam, e a CI está verde.
-
-### Pipeline de CI
-
-`install → lint → typecheck → depcruise → test:unit → test:integration (Testcontainers) → test:e2e → build`
-
-Qualquer etapa vermelha bloqueia o merge.
-
----
-
-## 9. Processos: API e worker
-
-| Processo | Entrypoint | Faz | Escala por |
-| --- | --- | --- | --- |
-| `api` | `main.api.ts` | Recebe HTTP, autentica, aplica cota, chama casos de uso, grava no outbox | Tráfego |
-| `worker` | `main.worker.ts` | Relay do outbox, consumers, agendador diário (revisões vencidas) | Tamanho das filas |
-
-Cada módulo exporta `register({ mode: 'api' | 'worker', deps })`; o entrypoint chama o `register` de todos e só liga o que pertence àquele modo. O worker expõe apenas `/health` e `/metrics`.
-
-Desenvolvimento local:
-
-```
-docker compose up -d                 # postgres, redis, rabbitmq, mailpit
-pnpm --filter server db:migrate
-pnpm --filter server dev:api         # terminal 1: HTTP na porta 3001
-pnpm --filter server dev:worker      # terminal 2: relay, consumers e agendador
-pnpm --filter web dev                # terminal 3: PWA
-```
-
-Variável `AI_PROVIDER=fake` liga os fakes de IA para desenvolver sem gastar orçamento.
-
-Em produção é a mesma imagem Docker com comandos diferentes (`node dist/main.api.js` e `node dist/main.worker.js`).
-
----
-
-## 10. Eventos e mensageria
-
-### Envelope
-
-Todo evento usa o mesmo envelope, definido em `packages/contracts`:
-
-```ts
-{
-  eventId: string;        // uuid v7, chave de idempotência
-  type: string;           // "conversation.session-ended"
-  version: number;        // 1
-  occurredAt: string;     // ISO 8601 UTC
-  userId: string;
-  traceparent?: string;   // W3C trace context, para o trace seguir até o worker
-  payload: unknown;       // validado pelo schema zod do tipo+versão
-}
-```
-
-### Eventos do MVP
-
-| Evento | Publicado por | Fila do consumidor | O que acontece |
-| --- | --- | --- | --- |
-| `conversation.session-ended.v1` | conversation | `conversation.analyze-session` | Extrai erros e sugestões, avalia objetivos da missão, grava o relatório |
-| `conversation.session-ended.v1` | conversation | `learning.record-activity` | Atualiza os dias seguidos |
-| `learning.word-saved.v1` | learning | `learning.prepare-reviews` | Gera frases de contexto para a revisão (o agendamento 1/3/7/14 é feito na hora, na mesma transação) |
-| `learning.reviews-due.v1` | learning (agendador diário) | `notifications.send-reminder` | Envia o e-mail, no máximo um por dia por pessoa |
-| `identity.user-deleted.v1` | identity | `<módulo>.purge-user` (um por módulo) | Cada módulo apaga os dados da pessoa (LGPD) |
-
-### Topologia no RabbitMQ
-
-- Exchange `domain.events` (topic); routing key = `<type>.v<version>`.
-- Uma fila por consumidor, ligada pela routing key.
-- Retry: até 3 tentativas com espera crescente (filas `<fila>.retry.1|2|3` com TTL de 5 s, 30 s e 2 min, que devolvem à fila original por dead-letter).
-- Depois da última tentativa, a mensagem vai para `<fila>.dlq` (uma DLQ por consumidor, para reprocessar só o que falhou). Um script `pnpm ops:dlq:replay <fila>` reenvia mensagens da DLQ.
-
-### Garantias
-
-- **Outbox**: evento gravado na mesma transação do dado de negócio; o relay publica com *publisher confirms* e só então marca `published_at`. Se o broker cair, nada se perde.
-- **Pelo menos uma vez**: todo consumidor é idempotente.
-- **Idempotência**: `platform.processed_events` com chave única (`event_id`, `consumer`), gravada na mesma transação do trabalho do consumidor; se a chave já existe, o evento é ignorado.
-- **Ack manual**: só depois de a transação do consumidor ser confirmada.
-- **Versionamento**: mudança incompatível gera `v2`; o publicador emite as duas versões enquanto houver consumidor de `v1`.
-
----
-
-## 11. Modelo de dados
-
-Um schema por módulo, sem joins nem foreign keys entre schemas. Referências entre módulos guardam só o id.
-
-| Schema | Tabela | Campos principais |
-| --- | --- | --- |
-| `identity` | `users` | id, email (opcional até o login), nome, idioma_alvo, nível, fuso, autoplay, criado_em |
-| `identity` | `auth_sessions` | id, user_id, expira_em (30 dias) |
-| `conversation` | `scenarios` | id, slug, tipo (`mission` \| `free_topic`), idioma, prompt_base, briefing, objetivos (2 a 3) |
-| `conversation` | `sessions` | id, user_id, scenario_id, modo (`scenario` \| `practice` \| `free`), vocabulary_item_id (prática), iniciada_em, encerrada_em |
-| `conversation` | `messages` | id, session_id, papel, texto, origem (`text` \| `audio`), criada_em |
-| `conversation` | `session_reports` | session_id, status (`pending` \| `ready` \| `failed`), erros (frase, correção, explicação), sugestões (até 5), objetivos (cumprido + frase que prova) |
-| `conversation` | `correction_feedback` | id, session_id, item_ref, motivo, criado_em |
-| `speech` | `speech_jobs` | id, message_id, tipo (`stt` \| `tts`), status, duração_ms, custo |
-| `speech` | `tts_cache` | hash (texto + voz + idioma), storage_ref, criado_em |
-| `learning` | `vocabulary_items` | id, user_id, termo, termo_normalizado, significado, exemplo, origem_session_id; único (user_id, idioma, termo_normalizado) |
-| `learning` | `reviews` | id, item_id, vence_em, intervalo_dias, último_resultado |
-| `learning` | `streaks` | user_id, dias_seguidos, último_dia (no fuso da pessoa) |
-| `notifications` | `notification_log` | id, user_id, tipo, data_local, enviada_em; único (user_id, tipo, data_local) |
-| `platform` | `outbox_events` | id, tipo, versão, payload, criado_em, publicado_em, tentativas |
-| `platform` | `processed_events` | event_id, consumer, processado_em |
-| `platform` | `ai_usage` | id, user_id, session_id, provedor, operação, unidades, custo_estimado, criado_em |
-
-Observações:
-
-- O áudio enviado pela pessoa **não é persistido**: fica em memória durante a transcrição e é descartado (PRD, privacidade).
-- O schema `platform` guarda tabelas técnicas compartilhadas, não dados de negócio.
-- O contador diário de mensagens fica no Redis com chave `quota:{userId}:{data_local}` e expiração na meia-noite do fuso da pessoa.
-
----
-
-## 12. API HTTP
-
-Todas as rotas ficam sob `/api/v1`, exigem autenticação (exceto login e health) e retornam erros como `application/problem+json`. Rotas marcadas com **$** passam pela cota diária antes de chamar qualquer provedor.
-
-| Método e rota | Módulo | Função | RF |
-| --- | --- | --- | --- |
-| `POST /auth/google` | identity | Login com Google e criação da sessão (semana 4) | RF01 |
-| `GET /me` · `PATCH /me` | identity | Ler e alterar idioma-alvo, nível, fuso e autoplay | RF02, RF06 |
-| `DELETE /me` | identity | Excluir a conta e publicar `user-deleted` | LGPD |
-| `GET /scenarios` | conversation | Listar cenários e temas livres, com briefing e objetivos | RF03, RF16, RF17 |
-| `POST /sessions` | conversation | Iniciar sessão; devolve a fala de abertura do personagem | RF03 |
-| `POST /sessions/:id/messages` **$** | conversation | Enviar texto e receber a resposta | RF04 |
-| `POST /sessions/:id/audio` **$** | speech | Enviar áudio, transcrever e devolver transcrição + resposta | RF05 |
-| `GET /messages/:id/speech` | speech | Obter o áudio da resposta (TTS, com cache) | RF06 |
-| `POST /sessions/:id/end` | conversation | Encerrar e publicar `session-ended` | RF09 |
-| `GET /sessions/:id/report` | conversation | Resumo; responde 202 enquanto a análise não terminou | RF07–RF09, RF16 |
-| `POST /reports/:sessionId/feedback` | conversation | Reportar correção errada | Risco "IA corrige errado" |
-| `POST /practice` **$** | conversation | Iniciar a missão "usar a palavra" | RF12 |
-| `GET /vocabulary` · `POST /vocabulary` · `DELETE /vocabulary/:id` | learning | Listar, salvar ("treinar essa", sem duplicar) e remover | RF10 |
-| `GET /reviews/due` | learning | Fila de revisão do dia | RF11 |
-| `POST /reviews/:id/answer` | learning | Registrar acerto ou erro | RF11, RF14 |
-| `GET /streak` | learning | Dias seguidos | RF14 |
-| `GET /health` · `GET /metrics` | shared | Saúde e métricas | — |
-
-**Autenticação antes da semana 4.** O adapter `FixedUserAuth` resolve sempre o usuário seed, mas exige o header `X-Dev-Token` (segredo em env) para que ninguém gaste o orçamento de IA. Na semana 4 entra `GoogleSessionAuth`, com o mesmo contrato da porta `IdentityApi.resolveUser`.
-
----
-
-## 13. Fluxo de conversa e áudio
+### Um turno
 
 ```mermaid
 sequenceDiagram
-  participant C as Cliente
-  participant S as speech
-  participant V as conversation
-  participant L as LLM
-  C->>S: POST /sessions/:id/audio (cota verificada)
-  S->>S: STT (mede duração), descarta o áudio
-  S->>V: ConversationApi.sendMessage(texto, origem=audio)
-  V->>V: monta prompt (cenário, idioma, nível, histórico recente)
-  V->>L: completar
-  V->>V: grava mensagens (pessoa + personagem)
-  V-->>S: resposta
-  S-->>C: transcrição + resposta em texto
-  C->>S: GET /messages/:id/speech
-  S->>S: TTS (cache por hash)
-  S-->>C: áudio
+  participant W as web
+  participant H as http
+  participant S as SendMessage
+  participant P as PromptBuilder
+  participant L as LLMClient
+  participant R as MissionRepository
+  W->>H: POST /missions/:id/messages { text }
+  H->>S: executar(missionId, text)
+  S->>R: buscar missão
+  S->>P: prompt do personagem (cenário, nível, idioma, conversa)
+  S->>L: gerar texto (stream consumido por inteiro no MVP)
+  S->>P: prompt do verificador (conversa, objetivos pendentes)
+  S->>L: gerar saída estruturada (objetivos cumpridos)
+  Note over S,L: se o verificador falhar, o turno segue<br/>com os objetivos do turno anterior
+  S->>R: salvar missão (mensagens, objetivos, estado)
+  S-->>H: resposta do personagem + objetivos + estado
+  H-->>W: 200
 ```
 
-Ao encerrar, `POST /sessions/:id/end` grava a sessão encerrada e `session-ended` no outbox, na mesma transação. O worker de análise envia histórico + objetivos ao LLM (modelo menor), valida a resposta JSON com zod e grava o relatório.
+### Relatório
 
-**Latência.** Meta ponta a ponta: 8 s p95 (áudio) e 6 s p95 (texto). Cada etapa (STT, LLM, TTS) registra a própria duração; o orçamento por etapa é fixado depois da primeira semana de medição. Se passar da meta, a ordem de ataque é: devolver o texto antes da voz (já é o desenho), reduzir o histórico enviado ao LLM e, por fim, streaming.
+`POST /missions/:id/report` executa o `EvaluateMission`. Ele monta o prompt do avaliador com a conversa inteira, os objetivos, o nível e o idioma; pede uma saída estruturada; e guarda o relatório na missão. As chamadas seguintes devolvem o relatório guardado.
 
-**Idiomas.** O idioma-alvo é parâmetro de ponta a ponta: perfil → prompt → STT/TTS (`en-US`; espanhol `es-ES` ou `es-MX`, **a decidir**, ver [Questões em aberto](#16-questões-em-aberto)). Inglês e espanhol compartilham módulos, eventos e cenários; o espanhol é ligado por configuração (`ENABLED_LANGUAGES`). Se adicionar um idioma exigir código fora de configuração e prompts, a fronteira está errada.
-
----
-
-## 14. Missões
-
-Um cenário é **dado, não código**: prompt base, briefing e 2 a 3 objetivos, carregados por seed versionado. O briefing aparece antes da conversa. O personagem recebe só o contexto da cena, sem a lista de objetivos, para não entregar as respostas.
-
-Ao fim da sessão, a análise avalia cada objetivo (cumprido ou não + frase da pessoa que prova). O modo "usar a palavra" é uma missão gerada na hora, com um único objetivo: usar o termo salvo corretamente. Avaliar objetivos durante a conversa fica para depois (custo e latência).
+Cada **correção** traz: o trecho original, a forma recomendada, uma explicação curta, o tipo (`grammar`, `vocabulary` ou `naturalness`) e, nas de vocabulário, os campos que alimentam o treino futuro (`term`, `suggestedTerm`, `shouldPractice`).
 
 ---
 
-## 15. Custo, limites, segurança e observabilidade
+## 7. API HTTP
 
-**Custo e limites**
-
-- Cota diária por pessoa (40 mensagens, proposta do PRD), verificada por um plugin Fastify nas rotas **$** antes de qualquer chamada a provedor. Ao estourar: `429` com `resetAt` no fuso da pessoa.
-- Teto mensal global (R$ 100, proposta): `ai_usage` acumula custo estimado; alerta em 80% e bloqueio das rotas **$** em 100% (`503` com mensagem clara).
-- Cache de TTS por hash (falas de abertura e frases repetidas).
-- Modelo menor para análise pós-sessão e frases de contexto; modelo melhor só na conversa.
-- Timeout e uma tentativa extra nas chamadas a provedores; depois disso, erro claro e o cliente oferece reenviar.
-
-**Segurança e privacidade**
-
-- Segredos só por variável de ambiente, validados no boot (`shared/infra/config`).
-- Áudio descartado após transcrição; `DELETE /me` apaga todos os dados via `user-deleted` em todos os módulos.
-- Logs não registram texto das mensagens nem e-mail em nível `info`.
-
-**Observabilidade**
-
-- Logs JSON (`pino`) com `trace_id`, `user_id` e `session_id`.
-- Trace OpenTelemetry cobre a requisição e segue pelo `traceparent` do envelope até o worker.
-- Métricas: duração por etapa (STT, LLM, TTS), tamanho das filas, mensagens na DLQ, falhas por provedor, custo por sessão, sessões iniciadas, palavras salvas, revisões concluídas (métricas de sucesso do PRD).
-- Alertas: DLQ não vazia, p95 acima da meta, custo mensal acima de 80%.
-
----
-
-## 16. Questões em aberto
-
-| Questão | Dono | Prazo |
+| Método e rota | Caso de uso | Resposta |
 | --- | --- | --- |
-| Variante do espanhol (`es-ES` ou `es-MX`) — o PRD marca como resolvida, mas não registra a escolha | @Gabriel | Antes da semana 3 |
-| Provedores de LLM, STT e TTS e seus preços (base do custo por sessão) | @Gabriel | Pesquisa do `/speckit-plan` da feature 001 |
-| Onde guardar o áudio de TTS cacheado (disco local, S3 compatível) | @Gabriel | Semana 2 |
-| Provedor de e-mail | @Gabriel | Semana 3 |
-| Hospedagem (VPS com Docker Compose, Fly.io, Railway...) | @Gabriel | Semana 4 |
+| `GET /scenarios` | `ListScenarios` | Cenários com título, descrição e objetivos |
+| `POST /missions` | `StartMission` | A missão criada (id, estado, objetivos) |
+| `GET /missions/:id` | — | O estado atual da missão (para recarregar a tela) |
+| `POST /missions/:id/messages` | `SendMessage` | A resposta do personagem, os objetivos e o estado |
+| `POST /missions/:id/end` | `EndMission` | O estado final |
+| `POST /missions/:id/report` | `EvaluateMission` | O relatório (idempotente) |
+| `POST /vocabulary-items` | `SaveVocabularyItem` | O item salvo a partir de uma correção ("Quero treinar") |
+| `GET /vocabulary-items` | — | Os itens salvos (para inspeção, sem tela no MVP) |
 
----
+Erros esperados:
 
-## 17. Plano de execução e features do spec-kit
-
-Cada semana vira uma ou mais features no spec-kit (uma fatia vertical testável ponta a ponta). Critério para avançar: o fluxo funciona no celular e a CI (testes + fronteiras) está verde. O detalhamento de cada fatia, os prompts e o tracking por sessão estão em [`docs/roadmap.md`](./roadmap.md).
-
-| Semana | Features (spec-kit) |
+| Situação | Status |
 | --- | --- |
-| 1 | `001` conversa por texto + fundação |
-| 2 | `002` conversa por áudio · `003` resumo da sessão (eventos + análise) |
-| 3 | `004` vocabulário e revisão · `005` lembrete por e-mail · `006` espanhol |
-| 4 | `007` login Google e LGPD · `008` missões, temas e "usar a palavra" · `009` métricas e lançamento |
+| Corpo inválido | 400 |
+| Missão ou cenário inexistente | 404 |
+| Mensagem para missão encerrada; relatório de missão em andamento | 409 |
+| `InvalidLLMOutputError` (saída inválida depois das novas tentativas) | 502 |
+| `LLMUnavailableError` (timeout ou provedor fora) | 503 |
+
+As rotas `GET /missions/:id` e `/vocabulary-items` e o formato do corpo de erro são propostas, a confirmar na spec.
 
 ---
 
-## 18. Extração de um módulo para serviço próprio
+## 8. Cenários e prompts
 
-Só acontece quando uma métrica justificar (latência, custo ou escala). Vale para `speech` ou `conversation`:
+**Arquivo de cenário** (validado pelo schema de `packages/shared` na inicialização):
 
-1. Criar `apps/speech-service` com o módulo inteiro (domínio, aplicação e adapters não mudam) e um `main.ts` próprio.
-2. No monolito, trocar a implementação de `SpeechApi` por um cliente HTTP com o mesmo contrato (os testes de contrato da porta rodam contra ele).
-3. Mover o schema `speech` para um banco próprio, com escrita dupla por um período.
-4. Rodar os dois caminhos em paralelo (strangler) e desligar o antigo quando erro e latência confirmarem.
-5. Contratos incompatíveis ganham `v2` sem quebrar quem consome `v1`.
+- `id`, `title` e `description`
+- `persona`: quem o personagem é e como fala
+- `situation`: o contexto da cena
+- `objectives`: a lista de objetivos, cada um com `id` e uma descrição verificável
 
-Como o domínio e a aplicação nunca dependeram de infraestrutura, a mudança fica nos adapters e no deploy.
+O cenário não declara idioma nem nível: esses são parâmetros da missão.
+
+**`PromptBuilder`**: uma função pura por papel, que junta blocos.
+
+| Papel | Blocos |
+| --- | --- |
+| Personagem | Regras do papel (ficar em personagem, não corrigir, não falar pelo aluno) + nível + idioma + persona e situação + conversa |
+| Verificador | Regras do papel + objetivos pendentes + conversa → schema "objetivos cumpridos" |
+| Avaliador | Regras do papel + nível + idioma + objetivos + conversa → schema do relatório |
+
+Novos níveis e idiomas são novos blocos. Novos cenários são novos arquivos.
 
 ---
 
-## Governança e ADRs
+## 9. Testes e evals
 
-- Este documento e a constitution do spec-kit devem concordar. Se divergirem, a constitution vence e este documento é corrigido.
-- Decisões marcadas com ADR ficam em `docs/adr/NNN-titulo.md` (contexto, decisão, consequências). Mudar uma delas exige um ADR novo que substitui o anterior.
-- Todo `plan.md` de feature passa pelo *Constitution Check*; violação só com justificativa na seção de complexidade do plano.
+Os testes entram pela **seam mais alta possível** e verificam comportamento externo, não a estrutura interna.
+
+| Seam | O que testa | O que é falso | Quando roda |
+| --- | --- | --- | --- |
+| **API HTTP** (principal) | O fluxo completo: cenários, missão, turnos, objetivos, conclusão, encerramento, relatório, "Quero treinar", validação e status de erro | Só o `LLMClient` (`FakeLLMClient`). Repositórios em memória e cenários (pasta de fixtures) são os adaptadores reais. Chamadas via `fastify.inject` | Todo commit |
+| **Adaptador Claude** | Retry, timeout, rejeição de saída inválida e tradução para os erros de LLM | O transporte HTTP do SDK | Todo commit |
+| **Cliente da API no front** | O cliente tipado e a lógica do chat (não a UI exaustivamente) | `fetch` | Todo commit |
+| **Evals** | Qualidade dos prompts: o avaliador encontra o erro esperado, o verificador marca o objetivo certo, o personagem não corrige | Nada (Claude API real) | Sob demanda: `pnpm eval` |
+
+Testes unitários diretos ficam só para regras puras difíceis de exercitar pela API, como os blocos do `PromptBuilder` e as mensagens de erro da validação de cenários.
+
+Regras:
+
+- **TDD** (red → green → refactor), começando pela seam HTTP.
+- **A Claude API nunca é chamada na CI.** Só os evals a usam, rodados manualmente.
+- **Os evals verificam estrutura, não texto exato.** Por exemplo: o JSON é válido e a correção esperada aparece. Começam com 5 a 10 casos dourados e entram junto da fatia que cria o prompt correspondente.
+- **Não há mock de biblioteca.** O que precisa ser falso é uma porta, e tem um fake.
+
+---
+
+## 10. Tratamento de falhas
+
+| Falha | Onde é tratada | Comportamento |
+| --- | --- | --- |
+| Timeout ou erro transitório do provedor | Adaptador Claude | Até 2 novas tentativas; depois, `LLMUnavailableError` |
+| Saída estruturada que não passa no schema | Adaptador Claude | Até 2 novas tentativas; depois, `InvalidLLMOutputError` |
+| Falha do personagem | Caso de uso → HTTP | O turno falha (503/502), nada é salvo e o aluno reenvia |
+| Falha do verificador | Caso de uso `SendMessage` | A resposta do personagem é entregue com os objetivos do turno anterior, e um aviso é registrado no log |
+| Falha do avaliador | Caso de uso → HTTP | O relatório falha (503/502) e o aluno tenta de novo; a missão não muda |
+| Cenário inválido no disco | Inicialização | A API não sobe e informa qual arquivo e qual campo estão errados |
+
+---
+
+## 11. Tooling
+
+| Área | Escolha |
+| --- | --- |
+| Linguagem | TypeScript `strict` em todos os pacotes |
+| Pacotes | pnpm workspaces |
+| Testes | Vitest (`fastify.inject` para as rotas) |
+| Lint e formatação | Biome |
+| Validação | Zod (contratos HTTP, cenários, saída do LLM e variáveis de ambiente) |
+| Execução da API | `tsx watch` em desenvolvimento, `tsc` no build |
+| Configuração | Um `config` por app, validado com Zod no boot; `.env.example` versionado |
+| CI | GitHub Actions: lint → typecheck → testes (sem evals) |
+
+Variáveis de ambiente previstas: `ANTHROPIC_API_KEY`, o modelo de cada papel, a porta da API, a origem permitida no CORS (API) e `NEXT_PUBLIC_API_URL` (web).
+
+---
+
+## 12. Pontos de extensão
+
+| Evolução | O que muda | O que não muda |
+| --- | --- | --- |
+| Novo cenário | Um arquivo novo em `scenarios/` | Código |
+| Novo nível ou idioma | Um bloco novo no `PromptBuilder` e a liberação do parâmetro | Cenários, casos de uso |
+| Novo modo (por exemplo, correção em tempo real) | Novos blocos de papel e, se preciso, um caso de uso | O modo padrão |
+| Streaming | A rota HTTP passa a usar SSE | Domínio, casos de uso, porta |
+| Áudio | Portas `SpeechToText` e `TextToSpeech`, adaptadores e rotas | O motor da missão |
+| Persistência | Adaptadores SQLite ou Postgres para os repositórios | Casos de uso |
+| Login | Os casos de uso passam a receber o ator, e as entidades ganham dono | Os papéis de IA, os cenários |
+| Treino (flashcard, frases de exemplo, uso numa frase) | Novo contexto `training` sobre os `VocabularyItem` | O avaliador (já produz os campos necessários) |
+| Outro provedor de LLM | Um adaptador novo de `LLMClient` | Todo o resto |
+
+---
+
+## 13. Questões em aberto
+
+| Questão | Quando decidir |
+| --- | --- |
+| Formato dos arquivos de cenário: JSON ou YAML | Fatia 1 |
+| O personagem abre a conversa ("Hi, what can I get you?") ou espera o aluno? | Spec |
+| Formato do corpo de erro HTTP (por exemplo, `application/problem+json`) | Spec |
+| Modelo da Claude para cada papel | Fatia 2 (com os evals) |
+| Timeout e espera entre as novas tentativas do adaptador | Fatia 2 |
+| Limite de turnos por missão, para conter o custo | Fatia 2 ou 3 |
+| Ferramenta para verificar as regras de camada (dependency-cruiser) | Quando a primeira violação acontecer, ou na fatia 1 |
+| Remover o spec-kit (`.specify/` e `.claude/skills/speckit-*`), já que o processo agora usa as skills do Matt Pocock | Antes da spec |
+
+---
+
+## 14. Plano de construção
+
+Fatias verticais, cada uma atravessando todas as camadas, com testes:
+
+1. Monorepo, tooling, `GET /scenarios` e a tela inicial.
+2. Iniciar a missão e conversar com o personagem (primeiro com o `FakeLLMClient`, depois com a Claude), mais os primeiros evals.
+3. Verificador de objetivos, conclusão automática e o botão "Encerrar".
+4. Relatório do avaliador e a tela de relatório.
+5. "Quero treinar": salvar o item de vocabulário.
+
+Fluxo de trabalho, com as skills do Matt Pocock: `/to-spec` → `/to-tickets` (um ticket por fatia) → `/implement` com `tdd` → `code-review`.
+
+---
+
+## Governança
+
+- Uma decisão difícil de reverter vira ADR em `docs/adr/`. Para mudá-la, crie um ADR novo que a substitui.
+- Um termo novo do domínio entra no `CONTEXT.md` antes de aparecer no código.
+- Este documento é atualizado no mesmo commit da mudança que ele descreve.

@@ -1,8 +1,8 @@
 # ADR 003 — Fastify com composition root manual, sem container de DI
 
-- Status: Aceito
+- Status: Aceito · Complementado por [011](./011-api-em-tres-camadas-por-contexto.md) (um único composition root no lugar de um `module.ts` por módulo)
 - Data: 2026-10-04
-- Referências: [architecture.md §2, §5](../architecture.md) · Constitution, princípios II e IX
+- Referências: [architecture.md](../architecture.md) · [architecture-v1.md §2, §5](../archive/architecture-v1.md)
 
 ## Contexto
 
