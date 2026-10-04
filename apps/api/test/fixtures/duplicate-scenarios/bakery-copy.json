@@ -1,0 +1,15 @@
+{
+  "id": "bakery",
+  "title": "Padaria",
+  "description": "Compre pão numa padaria movimentada.",
+  "persona": {
+    "name": "Ana",
+    "role": "baker",
+    "speakingStyle": "Warm and quick."
+  },
+  "situation": "A busy bakery early in the morning.",
+  "objectives": [
+    { "id": "choose-bread", "description": "O aluno escolhe o pão." },
+    { "id": "pay", "description": "O aluno paga." }
+  ]
+}

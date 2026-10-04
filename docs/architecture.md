@@ -210,10 +210,10 @@ As rotas `GET /missions/:id` e `/vocabulary-items` e o formato do corpo de erro 
 
 ## 8. Cenários e prompts
 
-**Arquivo de cenário** (validado pelo schema de `packages/shared` na inicialização):
+**Arquivo de cenário** (um arquivo JSON por cenário em `apps/api/scenarios/`, validado pelo schema de `packages/shared` na inicialização):
 
 - `id`, `title` e `description`
-- `persona`: quem o personagem é e como fala
+- `persona`: quem o personagem é e como fala (`name`, `role`, `speakingStyle`)
 - `situation`: o contexto da cena
 - `objectives`: a lista de objetivos, cada um com `id` e uma descrição verificável
 
@@ -275,7 +275,7 @@ Regras:
 | Testes | Vitest (`fastify.inject` para as rotas) |
 | Lint e formatação | Biome |
 | Validação | Zod (contratos HTTP, cenários, saída do LLM e variáveis de ambiente) |
-| Execução da API | `tsx watch` em desenvolvimento, `tsc` no build |
+| Execução da API | `tsx` em desenvolvimento e para rodar localmente; `tsc` só no typecheck. O `packages/shared` é consumido como código-fonte TypeScript, sem build próprio. Um build emitido entra junto com o deploy, que está fora do MVP |
 | Configuração | Um `config` por app, validado com Zod no boot; `.env.example` versionado |
 | CI | GitHub Actions: lint → typecheck → testes (sem evals) |
 
@@ -303,13 +303,12 @@ Variáveis de ambiente previstas: `ANTHROPIC_API_KEY`, o modelo de cada papel, a
 
 | Questão | Quando decidir |
 | --- | --- |
-| Formato dos arquivos de cenário: JSON ou YAML | Fatia 1 |
 | O personagem abre a conversa ("Hi, what can I get you?") ou espera o aluno? | Spec |
 | Formato do corpo de erro HTTP (por exemplo, `application/problem+json`) | Spec |
 | Modelo da Claude para cada papel | Fatia 2 (com os evals) |
 | Timeout e espera entre as novas tentativas do adaptador | Fatia 2 |
 | Limite de turnos por missão, para conter o custo | Fatia 2 ou 3 |
-| Ferramenta para verificar as regras de camada (dependency-cruiser) | Quando a primeira violação acontecer, ou na fatia 1 |
+| Ferramenta para verificar as regras de camada (dependency-cruiser). Por ora, um teste (`apps/api/src/architecture.test.ts`) verifica os imports de `domain` e `application` | Se o teste ficar insuficiente |
 | Remover o spec-kit (`.specify/` e `.claude/skills/speckit-*`), já que o processo agora usa as skills do Matt Pocock | Antes da spec |
 
 ---
