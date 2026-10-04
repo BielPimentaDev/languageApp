@@ -1,0 +1,8 @@
+{
+  "id": "no-objectives",
+  "title": "Sem objetivos",
+  "description": "Um cenário sem objetivos não é válido.",
+  "persona": { "name": "Bo", "role": "clerk", "speakingStyle": "Plain." },
+  "situation": "Anywhere.",
+  "objectives": []
+}

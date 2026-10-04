@@ -1,0 +1,20 @@
+{
+  "id": "coffee-shop",
+  "title": "Cafeteria",
+  "description": "Peça um café numa cafeteria movimentada, do pedido ao pagamento.",
+  "persona": {
+    "name": "Sam",
+    "role": "barista at a busy neighbourhood coffee shop",
+    "speakingStyle": "Friendly, upbeat and efficient. Uses natural, casual service language and keeps the line moving."
+  },
+  "situation": "It is a weekday morning and there is a short queue. The learner has just reached the counter to order a drink. The barista takes the order, asks about anything the learner has not mentioned yet (size, whether it is to go or to have here, how they want to pay) and wraps up once the order is complete.",
+  "objectives": [
+    { "id": "order-drink", "description": "O aluno pede uma bebida específica." },
+    { "id": "choose-size", "description": "O aluno escolhe o tamanho da bebida." },
+    {
+      "id": "to-go-or-stay",
+      "description": "O aluno diz se a bebida é para viagem ou para consumo no local."
+    },
+    { "id": "choose-payment", "description": "O aluno escolhe a forma de pagamento." }
+  ]
+}
